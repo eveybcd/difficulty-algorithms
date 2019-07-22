@@ -23,6 +23,13 @@ testnet = {
     'rpc_port': 17116
 }
 
+regtest = {
+    'rpc_user': 'user',
+    'rpc_password': 'pass',
+    'rpc_host': '172.168.0.103',
+    'rpc_port': 16101
+}
+
 bitcoinrpc = None
 file_name = 'blocks.csv'
 
@@ -33,6 +40,8 @@ def set_net_type(network):
         net = mainnet
     elif network == 'testnet':
         net = testnet
+    elif network == 'regtest':
+        net = regtest
     else:
         return
     bitcoinrpc = AuthServiceProxy("http://%s:%s@%s:%s" % (net['rpc_user'], net['rpc_password'], net['rpc_host'], net['rpc_port']))
@@ -47,11 +56,11 @@ def get_block(height):
     return bitcoinrpc.getblock(block_hash)
 
 
-def get_lastest_blocks(count):
+def get_lastest_blocks(count, step=1):
     chain_info = bitcoinrpc.getblockchaininfo()
     block_height = chain_info['blocks']
     block_list = []
-    for height in range(block_height - count, block_height + 1):
+    for height in range(block_height - count*step, block_height + 1, step):
         block_list.append(get_block(height))
         print('block %s got' % height)
         time.sleep(0.2)
@@ -159,6 +168,6 @@ def draw_solve_time_pie(block_list):
     plt.show()
 
 
-# set_net_type('testnet')
+# set_net_type('regtest')
 # write_blocks_to_csv(get_lastest_blocks(100))
 # draw_solve_time_diagram(read_blocks_from_csv())
