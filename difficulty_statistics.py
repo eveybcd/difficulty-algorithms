@@ -15,7 +15,8 @@ mainnet = {
     'rpc_password': '123456',
     'rpc_host': '127.0.0.1',
     'rpc_port': 7116,
-    'fork_height': 495867
+    'fork_height': 495867,
+    'pow_limit': 0x0000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffff
 }
 
 testnet = {
@@ -23,15 +24,17 @@ testnet = {
     'rpc_password': '123456',
     'rpc_host': '127.0.0.1',
     'rpc_port': 17116,
-    'fork_height': 1065121
+    'fork_height': 1065121,
+    'pow_limit': 0x00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 }
 
 regtest = {
     'rpc_user': 'user',
     'rpc_password': 'pass',
-    'rpc_host': '172.168.0.103',
+    'rpc_host': '127.0.0.1',
     'rpc_port': 16101,
-    'fork_height': 1
+    'fork_height': 1,
+    'pow_limit': 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 }
 
 net = None
@@ -237,42 +240,53 @@ def get_next_work_required(block_list):
     return next_nbits
 
 
+# next_target = avg_target * LWMA(solvetimes) / T
+# next_target = (sum_target / N) * (weighted_solvetime_sum / (N*(N+1)/2)) / T
 def lwma_next_work_required(block_list):
-    last_height = block_list[-1]['height']
 
-    # lwma param
-    pow_target_space = 10 * 60
-    average_window = 45
-    adjusted_weight = int(average_window * (average_window + 1) // 2 * pow_target_space * 0.998)
-    denominator = 10
+    # T
+    target_solvetime = 10 * 60
+    # N For T=600, 300, 150 use approximately N=60, 90, 120
+    average_window = 60
+    # Define a k that will be used to get a proper average after weighting the solvetimes.
+    k = int(average_window * (average_window + 1) * target_solvetime // 2)
 
-    pow_limit = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    height = block_list[-1]['height']
+    pow_limit = net['pow_limit']
 
-    if last_height < average_window:
+    # New coins should just give away first N blocks before using this algorithm.
+    if height < average_window:
         return ser.compact_from_uint256(pow_limit)
 
-    weighted_solve_time = 0
-    weight = 0
-    sum_target = 0
-    for height in range(last_height+1-average_window, last_height+1):
-        block = block_list[height-last_height-1]
-        prev_block = block_list[height-last_height-1-1]
-        solve_time = block['time'] - prev_block['time']
+    average_target = 0
+    prev_timestamp = block_list[-average_window-1]['time']
+    sum_weighted_solvetimes = 0
+    solvetime_weight = 0
 
-        if solve_time > 6 * pow_target_space:
-            solve_time = 6 * pow_target_space
+    # Loop through N most recent blocks.
+    for i in range(height+1-average_window, height+1):
+        block = block_list[i-height-1]
+        # Prevent solvetimes from being negative in a safe way. It must be done like this.
+        # In particular, do not attempt anything like  if(solvetime < 0) {solvetime=0;}
+        # The +1 ensures new coins do not calculate nextTarget = 0.
+        this_timestamp = block['time'] if block['time'] > prev_timestamp else prev_timestamp + 1
 
-        weight = weight + 1
-        weighted_solve_time += solve_time*weight
+        # A 6*T limit will prevent large drops in difficulty from long solvetimes.
+        solve_time = min(6*target_solvetime, this_timestamp-prev_timestamp)
+
+        # The following is part of "preventing negative solvetimes".
+        prev_timestamp = this_timestamp
+
+        # Give linearly higher weight to more recent solvetimes.
+        solvetime_weight = solvetime_weight + 1
+        sum_weighted_solvetimes += solve_time * solvetime_weight
 
         target = ser.uint256_from_compact(block['nbits'])
-        sum_target += target // (adjusted_weight * average_window)
+        average_target += target // (average_window * k)  # Dividing by k here prevents an overflow below.
 
-    if weighted_solve_time < adjusted_weight // denominator:
-        print('unreasonable weighted solve time')
-        weighted_solve_time = adjusted_weight // denominator
-
-    next_target = weighted_solve_time * sum_target
+    # Desired equation in next line was nextTarget = avgTarget * sumWeightSolvetimes / k
+    # but 1/k was moved to line above to prevent overflow in new coins
+    next_target = sum_weighted_solvetimes * average_target
 
     if next_target > pow_limit:
         print('exceed pow limit')
@@ -287,11 +301,12 @@ def lwma_next_work_required(block_list):
 
 # set_net_type('regtest')
 
-# write_blocks_to_csv(get_lastest_blocks(50))
-# write_blocks_to_csv(get_blocks(0, 73))
+# write_blocks_to_csv(get_lastest_blocks(100))
+# write_blocks_to_csv(get_blocks(288, 315))
 
 # get_next_work_required(read_blocks_from_csv())
 # lwma_next_work_required(read_blocks_from_csv())
 
 # draw_solve_time_diagram(read_blocks_from_csv())
 # draw_difficulty_diagram(read_blocks_from_csv())
+# draw_solve_time_pie(read_blocks_from_csv())
